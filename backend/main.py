@@ -1,124 +1,152 @@
-import os
-from typing import List, Optional, Dict, Any
-from dotenv import load_dotenv
-from sqlmodel import Field, SQLModel, Session, create_engine, select
-from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+import sqlite3
+import json
+from typing import List, Optional
+
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-import httpx
-from datetime import datetime
+from pydantic import BaseModel, EmailStr, Field
+import os # Needed for environment variable access
+import httpx # Needed for GitHub API calls
 
-# --- 1. Configuration and Setup ===============
+# --- Configuration ---
+DATABASE_NAME = "contacts.db"
 
-# Load environment variables from .env file (if present)
-# NOTE: For this code to run successfully, you must set HUNTER_API_KEY in your environment or .env file.
-load_dotenv()
+# --- 2. Database Setup & Initialization ---
 
-DATABASE_URL = "sqlite:///./contacts.db"
-HUNTER_API_KEY = os.getenv("HUNTER_API_KEY")
+def initialize_db():
+    """Creates the database file and the contacts table if they don't exist."""
+    conn = sqlite3.connect(DATABASE_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            phone TEXT
+        );
+    """)
+    conn.commit()
+    conn.close()
 
-engine = create_engine(DATABASE_URL, echo=False)
+# --- 3. Pydantic Schemas ---
 
-def create_db_and_tables():
-    """Initializes the database and creates tables."""
-    SQLModel.metadata.create_all(engine)
-
-# --- 2. Database Model ===============
-
-class Contact(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str = Field(index=True)
-    email: str = Field(index=True, unique=True)
-    phone: Optional[str] = None
-    is_verified: bool = Field(default=False, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-
-# --- 3. Pydantic Schemas ===============
-
-# Request Schemas (Input)
-class ContactCreate(SQLModel):
-    name: str
-    email: str
+class ContactCreate(BaseModel):
+    """Schema for creating a new contact (used for POST and PUT body)."""
+    name: str = Field(..., min_length=1)
+    email: EmailStr
     phone: Optional[str] = None
 
-class ContactUpdate(SQLModel):
+class ContactUpdate(BaseModel):
+    """Schema for partial updates (Not strictly used for PUT based on plan, but defined)."""
     name: Optional[str] = None
-    email: Optional[str] = None
+    email: Optional[EmailStr] = None
     phone: Optional[str] = None
 
-# Response Schemas (Output)
-class ContactRead(SQLModel):
+class Contact(ContactCreate):
+    """Schema for returning a contact record, including the ID."""
     id: int
-    name: str
-    email: str
-    phone: Optional[str] = None
-    is_verified: bool
-    created_at: datetime
 
-# --- 4. Hunter.io Integration Logic ===============
+# --- 4. Database Utility Functions ---
 
-async def verify_email_task(contact_id: int, email: str, db_session: Session):
-    """
-    Asynchronously verifies the email using Hunter.io API and updates the DB.
-    This function runs in the background.
-    """
-    if not HUNTER_API_KEY:
-        print("Warning: HUNTER_API_KEY not set. Skipping email verification.")
-        return
+def db_get_all_contacts() -> List[Contact]:
+    conn = sqlite3.connect(DATABASE_NAME)
+    conn.row_factory = sqlite3.Row # Allows accessing columns by name
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, email, phone FROM contacts")
+    rows = cursor.fetchall()
+    conn.close()
+    
+    contacts = []
+    for row in rows:
+        # Convert sqlite row to dictionary and then to Pydantic model
+        contact_data = dict(row)
+        contacts.append(Contact(**contact_data))
+    return contacts
 
-    hunter_url = f"https://api.hunter.io/v2/email-verifier?email={email}&api_key={HUNTER_API_KEY}"
+def db_get_contact_by_id(contact_id: int) -> Optional[Contact]:
+    conn = sqlite3.connect(DATABASE_NAME)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, email, phone FROM contacts WHERE id = ?", (contact_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        return Contact(**dict(row))
+    return None
 
-    is_valid = False
+def db_create_contact(contact_data: ContactCreate) -> Contact:
+    conn = sqlite3.connect(DATABASE_NAME)
+    cursor = conn.cursor()
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(hunter_url)
-            response.raise_for_status() # Raises HTTPStatusError for 4xx/5xx responses
-
-        data = response.json()
+        cursor.execute(
+            "INSERT INTO contacts (name, email, phone) VALUES (?, ?, ?)",
+            (contact_data.name, contact_data.email, contact_data.phone)
+        )
+        conn.commit()
+        new_id = cursor.lastrowid
         
-        # Hunter.io success structure check
-        if data.get("data", {}).get("status") in ["valid", "deliverable"]:
-            is_valid = True
-            
-    except httpx.HTTPStatusError as e:
-        print(f"Hunter API HTTP Error for {email}: {e.response.status_code} - {e.response.text}")
-    except httpx.RequestError as e:
-        print(f"Hunter API Request Error for {email}: {e}")
-    except Exception as e:
-        print(f"Unexpected error during Hunter verification for {email}: {e}")
+        # Retrieve the newly created contact to return the full object
+        cursor.execute("SELECT id, name, email, phone FROM contacts WHERE id = ?", (new_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return Contact(**dict(row))
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise
+    except Exception:
+        conn.close()
+        raise
 
-    # Update the database record (requires a new session context for background tasks)
+def db_update_contact(contact_id: int, contact_data: ContactCreate) -> Optional[Contact]:
+    conn = sqlite3.connect(DATABASE_NAME)
+    cursor = conn.cursor()
+    
+    # Check if contact exists first
+    cursor.execute("SELECT id FROM contacts WHERE id = ?", (contact_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return None
+
     try:
-        with Session(engine) as update_session:
-            contact_to_update = update_session.get(Contact, contact_id)
-            if contact_to_update:
-                contact_to_update.is_verified = is_valid
-                update_session.add(contact_to_update)
-                update_session.commit()
-                update_session.refresh(contact_to_update)
-                print(f"Successfully updated verification status for Contact ID {contact_id} to {is_valid}")
-    except Exception as e:
-        print(f"Database update failed for Contact ID {contact_id}: {e}")
+        cursor.execute(
+            "UPDATE contacts SET name = ?, email = ?, phone = ? WHERE id = ?",
+            (contact_data.name, contact_data.email, contact_data.phone, contact_id)
+        )
+        conn.commit()
+        
+        # Retrieve updated contact
+        cursor.execute("SELECT id, name, email, phone FROM contacts WHERE id = ?", (contact_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return Contact(**dict(row))
+    except sqlite3.IntegrityError:
+        conn.close()
+        raise
+    except Exception:
+        conn.close()
+        raise
 
+def db_delete_contact(contact_id: int) -> bool:
+    conn = sqlite3.connect(DATABASE_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM contacts WHERE id = ?", (contact_id,))
+    conn.commit()
+    deleted_count = cursor.rowcount
+    conn.close()
+    return deleted_count > 0
 
-# --- Dependency Injection for Database Session ===============
-
-def get_session():
-    with Session(engine) as session:
-        yield session
-
-# --- 5. FastAPI Application Initialization ===============
+# --- 1. FastAPI Application Setup ---
 
 app = FastAPI(
     title="Contact Manager API",
-    version="1.0.0",
-    on_startup=[create_db_and_tables]
+    description="Backend implementation using FastAPI and SQLite.",
+    version="1.0.0"
 )
 
-# --- 7. CORS Configuration ===============
+# --- 6. CORS Configuration ---
 origins = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "*" # Allow all origins for development simplicity
+    "*" # Allowing all origins for development simplicity as per plan context
 ]
 
 app.add_middleware(
@@ -129,113 +157,105 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 6. API Endpoint Definitions ===============
+@app.on_event("startup")
+async def startup_event():
+    """Initializes the database on application startup."""
+    initialize_db()
+    
+# --- GitHub Automation Endpoint (As required by summary) ---
 
-# Endpoint 1: Create Contact
-@app.post("/api/v1/contacts", response_model=ContactRead, status_code=status.HTTP_201_CREATED)
-async def create_contact(
-    contact: ContactCreate, 
-    session: Session = Depends(get_session),
-    background_tasks: BackgroundTasks = Depends(BackgroundTasks)
-):
-    # Check for duplicates (409 Conflict)
-    existing = session.exec(select(Contact).where(Contact.email == contact.email)).first()
-    if existing:
+@app.post("/github/sync", summary="Trigger GitHub Sync via Server Token")
+async def trigger_github_sync():
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="GITHUB_TOKEN environment variable not set.")
+
+    # Placeholder for actual GitHub API interaction
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    
+    # Example: Fetching user data to prove token access
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get("https://api.github.com/user", headers=headers)
+            response.raise_for_status()
+            user_data = response.json()
+            return {"message": "GitHub sync initiated successfully", "user": user_data['login']}
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=e.response.status_code, detail=f"GitHub API Error: {e.response.text}")
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Unexpected error during GitHub sync: {str(e)}")
+
+# --- 4. API Endpoint Paths and HTTP Methods ---
+
+# 1. POST /contacts: Create a new contact
+@app.post("/contacts", response_model=Contact, status_code=status.HTTP_201_CREATED, summary="Create a new contact")
+async def create_contact(contact: ContactCreate):
+    try:
+        new_contact = db_create_contact(contact)
+        return new_contact
+    except sqlite3.IntegrityError:
+        # 409 Conflict: Duplicate email
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Email address '{contact.email}' already exists"
+            detail=f"Contact with email '{contact.email}' already exists"
         )
 
-    db_contact = Contact.model_validate(contact)
-    session.add(db_contact)
-    session.commit()
-    session.refresh(db_contact)
+# 2. GET /contacts: Retrieve all contacts
+@app.get("/contacts", response_model=List[Contact], summary="Retrieve all contacts")
+async def get_all_contacts():
+    return db_get_all_contacts()
 
-    # Trigger background verification task
-    if HUNTER_API_KEY:
-        background_tasks.add_task(verify_email_task, db_contact.id, db_contact.email, session)
-    else:
-        print("Skipping background task as API key is missing.")
-
-    return db_contact
-
-# Endpoint 2: Retrieve All Contacts
-@app.get("/api/v1/contacts", response_model=List[ContactRead])
-async def read_contacts(session: Session = Depends(get_session)):
-    contacts = session.exec(select(Contact)).all()
-    return contacts
-
-# Endpoint 3: Retrieve Single Contact
-@app.get("/api/v1/contacts/{contact_id}", response_model=ContactRead)
-async def read_contact(contact_id: int, session: Session = Depends(get_session)):
-    contact = session.get(Contact, contact_id)
-    if not contact:
+# 3. GET /contacts/{contact_id}: Retrieve a single contact by ID
+@app.get("/contacts/{contact_id}", response_model=Contact, summary="Retrieve a contact by ID")
+async def get_contact(contact_id: int):
+    contact = db_get_contact_by_id(contact_id)
+    if contact is None:
+        # 404 Not Found
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Contact with ID {contact_id} not found"
         )
     return contact
 
-# Endpoint 4: Update Contact
-@app.put("/api/v1/contacts/{contact_id}", response_model=ContactRead)
-async def update_contact(
-    contact_id: int, 
-    contact_update: ContactUpdate, 
-    session: Session = Depends(get_session)
-):
-    db_contact = session.get(Contact, contact_id)
-    if not db_contact:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Contact with ID {contact_id} not found"
-        )
-
-    update_data = contact_update.model_dump(exclude_unset=True)
+# 4. PUT /contacts/{contact_id}: Fully update an existing contact by ID
+@app.put("/contacts/{contact_id}", response_model=Contact, summary="Fully update an existing contact")
+async def update_contact(contact_id: int, contact_update_data: ContactCreate):
+    # PUT requires full replacement data (using ContactCreate schema as per plan)
     
-    # Handle potential email conflict during update
-    if 'email' in update_data and update_data['email'] != db_contact.email:
-        existing = session.exec(select(Contact).where(Contact.email == update_data['email'])).first()
-        if existing and existing.id != contact_id:
-             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Email address '{update_data['email']}' already exists for another contact."
-            )
-
-    for key, value in update_data.items():
-        setattr(db_contact, key, value)
-
-    session.add(db_contact)
-    session.commit()
-    session.refresh(db_contact)
-    return db_contact
-
-# Endpoint 5: Delete Contact
-@app.delete("/api/v1/contacts/{contact_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_contact(contact_id: int, session: Session = Depends(get_session)):
-    contact = session.get(Contact, contact_id)
-    if not contact:
+    # Check existence and attempt update in one go via utility function
+    try:
+        updated_contact = db_update_contact(contact_id, contact_update_data)
+    except sqlite3.IntegrityError:
+        # 409 Conflict: Duplicate email resulting from update
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Update failed: Email '{contact_update_data.email}' is already in use by another contact."
+        )
+    
+    if updated_contact is None:
+        # 404 Not Found
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Contact with ID {contact_id} not found"
         )
-    session.delete(contact)
-    session.commit()
-    return None
+    
+    return updated_contact
 
-# Endpoint 6: Manual Verification Debug Endpoint
-@app.get("/api/v1/contacts/verify/{email}")
-async def manual_verify_email(email: str, background_tasks: BackgroundTasks):
-    if not HUNTER_API_KEY:
+
+# 5. DELETE /contacts/{contact_id}: Delete a contact by ID
+@app.delete("/contacts/{contact_id}", summary="Delete a contact by ID")
+async def delete_contact(contact_id: int):
+    success = db_delete_contact(contact_id)
+    
+    if not success:
+        # 404 Not Found
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Hunter.io API Key is not configured. Cannot perform verification."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Contact with ID {contact_id} not found"
         )
-        
-    # Find the contact ID first
-    with Session(engine) as session:
-        contact = session.exec(select(Contact).where(Contact.email == email)).first()
-        if not contact:
-            return {"status": "error", "message": f"Contact with email {email} not found in database."}
-            
-        background_tasks.add_task(verify_email_task, contact.id, contact.email, session)
-        return {"status": "success", "message": f"Verification task initiated for {email}."}
+    
+    # Response matching the plan example: {"message": "Contact deleted"}
+    return {"message": "Contact deleted"}
