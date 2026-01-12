@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Contact Manager Frontend</title>
+    <style>
+        /* --- 1. CSS Variables & Base Styling --- */
+        :root {
+            /* Light Mode Defaults */
+            --bg-color: #f0f2f5;
+            --text-color: #1c1e21;
+            --card-bg-light: rgba(255, 255, 255, 0.8);
+            --border-color: #ddd;
+            --header-bg: #ffffff;
+            --button-primary: #007bff;
+            --button-primary-hover: #0056b3;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        /* Dark Mode Overrides */
+        body.dark-mode {
+            --bg-color: #18191a;
+            --text-color: #e4e6eb;
+            --card-bg-light: rgba(30, 30, 30, 0.85);
+            --border-color: #444;
+            --header-bg: #242526;
+            --button-primary: #18a2b8;
+            --button-primary-hover: #0f6c7a;
+        }
+
+        /* --- 2. Glassmorphism Styling --- */
+        .glass-panel {
+            background-color: var(--card-bg-light);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.3); /* Subtle white border for contrast */
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.3s;
+        }
+
+        /* --- 3. Layout & Header --- */
+        header {
+            background-color: var(--header-bg);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 1.8em;
+        }
+
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: background-color 0.2s;
+        }
+
+        #theme-toggle {
+            background: none;
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+        }
+        #theme-toggle:hover {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+        body.dark-mode #theme-toggle:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+
+        #add-contact-btn {
+            background-color: var(--button-primary);
+            color: white;
+        }
+        #add-contact-btn:hover {
+            background-color: var(--button-primary-hover);
+        }
+
+        main {
+            padding: 20px;
+            max-width: 1400px;
+            margin: 20px auto;
+        }
+
+        /* --- 4. Contact List Grid --- */
+        #contact-list-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            min-height: 200px;
+            padding: 20px;
+        }
+
+        .contact-item {
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .contact-item h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+            word-wrap: break-word;
+        }
+
+        .contact-item p {
+            margin: 3px 0;
+            font-size: 0.95em;
+        }
+
+        .delete-btn {
+            margin-top: 10px;
+            background-color: #dc3545;
+            color: white;
+            align-self: flex-start;
+        }
+        .delete-btn:hover {
+            background-color: #c82333;
+        }
+
+        /* --- 5. Loading & Error Banners --- */
+        #loading-indicator, #error-banner {
+            text-align: center;
+            padding: 15px;
+            margin: 10px auto;
+            max-width: 600px;
+            border-radius: 6px;
+            font-weight: bold;
+        }
+
+        #loading-indicator {
+            background-color: var(--button-primary);
+            color: white;
+        }
+
+        #error-banner {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #error-banner .close-btn {
+            background: none;
+            border: none;
+            font-size: 1.2em;
+            cursor: pointer;
+            color: #721c24;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* --- 6. Modal Styling (Glassmorphism applied to content) --- */
+        .modal {
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            padding: 30px;
+            border-radius: 10px;
+            width: 90%;
+            max-width: 500px;
+            position: relative;
+        }
+
+        .close-button {
+            color: var(--text-color);
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        #contact-form label {
+            display: block;
+            margin-top: 10px;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        #contact-form input[type="text"],
+        #contact-form input[type="email"],
+        #contact-form input[type="tel"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            box-sizing: border-box;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        #contact-form button[type="submit"] {
+            width: 100%;
+            padding: 12px;
+            background-color: var(--button-primary);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.1em;
+        }
+        #contact-form button[type="submit"]:hover {
+            background-color: var(--button-primary-hover);
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Contact Manager</h1>
+        <div>
+            <button id="theme-toggle">Toggle Theme</button>
+            <button id="add-contact-btn">Add New Contact</button>
+        </div>
+    </header>
+
+    <main>
+        <div id="error-banner" class="hidden">
+            <span>Network Error: Could not connect to the backend.</span>
+            <button class="close-btn" onclick="document.getElementById('error-banner').classList.add('hidden')">&times;</button>
+        </div>
+        
+        <div id="loading-indicator" class="hidden">Loading contacts...</div>
+
+        <div id="contact-list-container" class="glass-panel">
+            <!-- Contacts will be rendered here by JS -->
+            <p style="grid-column: 1 / -1; text-align: center; padding: 20px;">Fetching initial contact list...</p>
+        </div>
+    </main>
+
+    <!-- Contact Form Modal -->
+    <div id="contact-modal" class="modal hidden">
+        <div class="modal-content glass-panel">
+            <span class="close-button" id="close-modal-btn">&times;</span>
+            <h2>Add New Contact</h2>
+            <form id="contact-form">
+                <label for="name">Name:</label>
+                <input type="text" id="name" name="name" required placeholder="Full Name">
+                
+                <label for="email">Email:</label>
+                <input type="email" id="email" name="email" required placeholder="contact@example.com">
+                
+                <label for="phone">Phone:</label>
+                <input type="tel" id="phone" name="phone" placeholder="e.g., 555-123-4567">
+                
+                <button type="submit">Save Contact</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // --- State Variables ---
+        let contactsData = [];
+        // API Endpoint defined by the plan
+        const API_BASE = 'http://localhost:8000'; 
+
+        // --- DOM Elements ---
+        const contactListContainer = document.getElementById('contact-list-container');
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        const addContactBtn = document.getElementById('add-contact-btn');
+        const contactForm = document.getElementById('contact-form');
+        const modal = document.getElementById('contact-modal');
+        const closeModalBtn = document.getElementById('close-modal-btn');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const errorBanner = document.getElementById('error-banner');
+
+        // --- Theme Management ---
+        function toggleTheme() {
+            document.body.classList.toggle('dark-mode');
+            // In a real app, we would save this preference to localStorage here.
+        }
+        themeToggleBtn.addEventListener('click', toggleTheme);
+
+        // --- Modal Management ---
+        function showModal() {
+            modal.classList.remove('hidden');
+            document.getElementById('name').focus();
+        }
+
+        function hideModal() {
+            modal.classList.add('hidden');
+            contactForm.reset();
+        }
+
+        addContactBtn.addEventListener('click', showModal);
+        closeModalBtn.addEventListener('click', hideModal);
+        
+        // Close modal if user clicks outside of it
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                hideModal();
+            }
+        });
+
+
+        // --- State Display Utilities ---
+        function showLoading(isLoading) {
+            loadingIndicator.classList.toggle('hidden', !isLoading);
+            // Clear list content while loading to show spinner/message
+            if (isLoading) {
+                contactListContainer.innerHTML = '';
+            }
+        }
+
+        function displayError(message) {
+            const bannerContent = document.querySelector('#error-banner span');
+            bannerContent.textContent = `Error: ${message}`;
+            errorBanner.classList.remove('hidden');
+            
+            // Hide error after 10 seconds
+            clearTimeout(errorBanner.timer);
+            errorBanner.timer = setTimeout(() => {
+                errorBanner.classList.add('hidden');
+            }, 10000);
+        }
+
+        // --- API Interaction ---
+        
+        async function fetchContacts() {
+            showLoading(true);
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/contacts`);
+                
+                if (!response.ok) {
+                    // Handle HTTP errors (4xx/5xx)
+                    const errorBody = await response.json().catch(() => ({ message: `Status ${response.status}` }));
+                    throw new Error(`HTTP error! ${errorBody.detail || errorBody.message || `Status ${response.status}`}`);
+                }
+                
+                contactsData = await response.json();
+                renderContacts();
+            } catch (error) {
+                // Handle network errors or thrown HTTP errors
+                console.error("Fetch Contacts Error:", error);
+                displayError(`Failed to load contacts. Is the backend running at ${API_BASE}? (${error.message})`);
+                contactListContainer.innerHTML = '<p style="grid-column: 1 / -1; text-align: center; padding: 20px;">Failed to load contacts. Check console for details.</p>';
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function deleteContact(id) {
+            if (!confirm(`Are you sure you want to delete contact ID ${id}?`)) return;
+
+            showLoading(true);
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/contacts/${id}`, {
+                    method: 'DELETE',
+                });
+
+                if (!response.ok && response.status !== 204) {
+                    throw new Error(`Deletion failed with status: ${response.status}`);
+                }
+                
+                // Remove item from local state
+                contactsData = contactsData.filter(c => String(c.id) !== String(id));
+                renderContacts();
+
+            } catch (error) {
+                displayError(`Error deleting contact ${id}: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function handleFormSubmit(event) {
+            event.preventDefault();
+            showLoading(true);
+            
+            const nameInput = document.getElementById('name').value.trim();
+            const emailInput = document.getElementById('email').value.trim();
+            const phoneInput = document.getElementById('phone').value.trim() || null;
+
+            const newContact = {
+                name: nameInput,
+                email: emailInput,
+                phone: phoneInput
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/api/v1/contacts`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(newContact)
+                });
+
+                if (!response.ok) {
+                    const errorBody = await response.json().catch(() => ({ detail: `Status ${response.status}` }));
+                    throw new Error(errorBody.detail || `Server responded with status ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                // Add new contact to state, ensuring we use the ID returned by the backend
+                contactsData.push(result); 
+                renderContacts();
+                hideModal();
+
+            } catch (error) {
+                displayError(`Error adding contact: ${error.message}`);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // --- UI Rendering ---
+        function renderContacts() {
+            contactListContainer.innerHTML = ''; // Clear previous list
+            
+            if (contactsData.length === 0) {
+                contactListContainer.innerHTML = '<p style="grid-column: 1 / -1; text-align: center; padding: 20px;">No contacts found. Click \"Add New Contact\" to begin.</p>';
+                return;
+            }
+
+            contactsData.forEach(contact => {
+                const contactEl = document.createElement('div');
+                contactEl.className = 'contact-item glass-panel';
+                
+                // Conditional styling based on verification status
+                const verificationStatus = contact.verified === true;
+                const verificationIcon = verificationStatus
+                    ? '<span title="Verified" style="color: green; margin-left: 8px;">&#10003;</span>' // Green Checkmark
+                    : '<span title="Needs Verification" style="color: orange; margin-left: 8px;">&#9888;</span>'; // Orange Warning Triangle
+
+                contactEl.innerHTML = `
+                    <h3>${contact.name} ${verificationIcon}</h3>
+                    <p>Email: ${contact.email}</p>
+                    <p>Phone: ${contact.phone || 'Not Provided'}</p>
+                    <button data-id="${contact.id}" class="delete-btn">Delete</button>
+                `;
+                
+                // Attach delete listener
+                contactEl.querySelector('.delete-btn').addEventListener('click', (e) => {
+                    deleteContact(e.target.dataset.id);
+                });
+
+                contactListContainer.appendChild(contactEl);
+            });
+        }
+
+        // --- Initialization ---
+        function initApp() {
+            // 1. Initialize Theme based on system preference
+            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                document.body.classList.add('dark-mode');
+            }
+            
+            // 2. Attach Form Listener
+            contactForm.addEventListener('submit', handleFormSubmit);
+
+            // 3. Load Data
+            fetchContacts();
+        }
+
+        // Start the application
+        initApp();
+    </script>
+</body>
+</html>
