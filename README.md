@@ -1,61 +1,84 @@
-# Contact Manager Fullstack Project
-
-This repository contains a complete Contact Manager application built using a decoupled architecture:
-
-*   **Frontend:** Vanilla HTML, CSS, and JavaScript for a responsive user interface.
-*   **Backend:** Python FastAPI providing a RESTful API backed by SQLite.
-*   **Automation:** Backend includes logic to interact with the GitHub REST API using a server-side environment variable (`GITHUB_TOKEN`).
+# Contact Manager Project
 
 ## Project Structure
-The project is structured into two main directories:
+The project is separated into two main directories: `frontend` (for static files) and `backend` (for Python/FastAPI application).
 
 ```
-/contact-manager-project
-├── /frontend
-│   └── index.html      (Contains embedded HTML, CSS, and JavaScript logic)
-└── /backend
-    ├── main.py         (FastAPI application, models, endpoints, and GitHub logic)
-    └── requirements.txt (Python dependencies)
+contact-manager-fullstack/
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py          # Contains FastAPI application, models, schemas, and CRUD logic
+│   │   ├── database.py      # SQLAlchemy setup (Engine, SessionLocal) (Note: Integrated into main.py for single file deployment)
+│   │   └── schemas.py       # Pydantic validation models (Note: Integrated into main.py for single file deployment)
+│   ├── contacts.db          # SQLite database file (created on first run)
+│   ├── requirements.txt     # Python dependencies
+│   └── README.md
+│
+└── index.html           # Main HTML structure (containing embedded CSS/JS)
 ```
 
 ## Environment Variables
-The backend requires one environment variable for the GitHub automation feature.
+For this local setup, environment variables are minimal, primarily used to configure the database path, though hardcoded in the provided backend script for immediate runnability.
 
-| Variable Name | Purpose |
-| :--- | :--- |
-| `GITHUB_TOKEN` | Personal Access Token (PAT) required by the FastAPI backend to authenticate against the GitHub REST API for automation tasks. |
+| Variable Name | Location | Purpose | Notes |
+| :--- | :--- | :--- | :--- |
+| `DATABASE_URL` | `.env` (Optional, used in `backend/app/database.py`) | Specifies the SQLite connection string. | Defaulted to `./contacts.db` in the provided code. |
 
-**Example (Linux/macOS):**
-```bash
-export GITHUB_TOKEN="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-```
+To use `.env` files for configuration (recommended for production/Vercel deployment):
+1. Create a `.env` file in the root of the `backend/` directory.
+2. Install `python-dotenv` (`pip install python-dotenv`).
+3. Load variables in `backend/app/main.py` using `from dotenv import load_dotenv; load_dotenv()`.
+
+## API Integration Notes
+The frontend (Vanilla JS) communicates directly with the FastAPI backend.
+
+1.  **Base URL**: The frontend JavaScript assumes the backend is running locally on port 8000: `http://127.0.0.1:8000`.
+2.  **CORS**: The FastAPI backend is configured to accept requests from common local frontend serving ports (e.g., 5500) and the backend's own port (8000). If you serve the frontend from a different port (e.g., 3000 for a React dev server), you must update the `origins` list in `backend/app/main.py`.
+3.  **Data Contract**: The frontend expects JSON payloads for POST/PUT operations and receives JSON arrays or objects from GET operations, matching the Pydantic schemas defined in the backend.
 
 ## How To Run Locally
+This process requires Python (3.8+) and a tool to serve the static HTML files (like a simple local web server).
 
-### Step 1: Setup Backend Environment
-1.  Navigate to the backend directory:
+### Step 1: Backend Setup and Execution (FastAPI/SQLite)
+
+1.  **Navigate to Backend Directory**:
     ```bash
-    cd backend
-    ```
-2.  Install required Python dependencies:
-    ```bash
-    pip install -r requirements.txt
+    cd contact-manager-fullstack/backend
     ```
 
-### Step 2: Set Environment Variable and Start Backend
-1.  Set your GitHub token in your current shell session:
+2.  **Create Virtual Environment (Recommended)**:
     ```bash
-    export GITHUB_TOKEN="your_actual_github_pat_here"
+    python -m venv venv
+    source venv/bin/activate  # On Windows use: .\venv\Scripts\activate
     ```
-2.  Start the FastAPI server using Uvicorn:
-    ```bash
-    uvicorn main:app --reload --host 127.0.0.1 --port 8000
-    ```
-    The backend will run on `http://127.0.0.1:8000`.
 
-### Step 3: Run Frontend
-1.  Navigate to the frontend directory:
+3.  **Install Dependencies**:
     ```bash
-    cd ../frontend
+    pip install fastapi uvicorn[standard] sqlalchemy pydantic python-dotenv
     ```
-2.  Open `index.html` directly in a web browser.
+
+4.  **Run the Server**:
+    ```bash
+    uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+    ```
+
+### Step 2: Frontend Setup and Execution (HTML/CSS/JS)
+
+1.  **Navigate to Frontend Directory** (or stay in root if serving from root):
+    ```bash
+    cd ../frontend # If following the structure strictly
+    ```
+
+2.  **Serve Static Files** (e.g., using Python's built-in server):
+    ```bash
+    python -m http.server 5500
+    ```
+
+3.  **Access the Application**:
+    Open your web browser and navigate to:
+    ```
+    http://127.0.0.1:5500
+    ```
+
+(Note: The provided structure places `index.html` at the root, and backend files in `backend/app/`.)
